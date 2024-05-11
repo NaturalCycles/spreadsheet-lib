@@ -1,5 +1,4 @@
 import {
-  CommonDBImplementationFeatures,
   CommonDBImplementationQuirks,
   createTestItemsDBM,
   runCommonDBTest,
@@ -20,9 +19,6 @@ const db = new SpreadsheetDB({
   spreadsheetId: '17meRABNrr4Pik9FF5HRQgRxxi4kjY2_dCHg3k2nqGGE',
 })
 
-const features: CommonDBImplementationFeatures = {
-  // strongConsistency: false,
-}
 const quirks: CommonDBImplementationQuirks = {
   // eventualConsistencyDelay: 100,
 }
@@ -44,4 +40,4 @@ test('auth', async () => {
   console.log(r)
 })
 
-describe('runCommonDBTest', () => runCommonDBTest(db, features, quirks))
+describe('runCommonDBTest', () => runCommonDBTest(db, quirks))

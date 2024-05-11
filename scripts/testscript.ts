@@ -1,11 +1,10 @@
 /*
 
-DEBUG=nc* yarn tsn testscript
+yarn tsn testscript
 
  */
 
-import { requireEnvKeys } from '@naturalcycles/nodejs-lib'
-import { runScript } from '@naturalcycles/nodejs-lib/dist/script'
+import { requireEnvKeys, runScript } from '@naturalcycles/nodejs-lib'
 
 runScript(async () => {
   const { GCP_CFG } = requireEnvKeys('GCP_CFG')

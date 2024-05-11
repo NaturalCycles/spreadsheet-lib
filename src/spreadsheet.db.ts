@@ -1,18 +1,24 @@
 import {
   BaseCommonDB,
   CommonDB,
-  CommonDBCreateOptions,
   CommonDBOptions,
   CommonDBSaveOptions,
   CommonDBStreamOptions,
-  CommonSchema,
-  CommonSchemaGenerator,
   DBQuery,
-  ObjectWithId,
   queryInMemory,
   RunQueryResult,
 } from '@naturalcycles/db-lib'
-import { StringMap, _by, _Memo, _uniq } from '@naturalcycles/js-lib'
+import {
+  StringMap,
+  _by,
+  _Memo,
+  _uniq,
+  ObjectWithId,
+  AnyObjectWithId,
+  JsonSchemaRootObject,
+  generateJsonSchemaFromData,
+  JsonSchemaObject,
+} from '@naturalcycles/js-lib'
 import { Debug, readableCreate, ReadableTyped } from '@naturalcycles/nodejs-lib'
 import { google, sheets_v4 } from 'googleapis'
 
@@ -56,16 +62,16 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
     return google.sheets({ version: 'v4', auth })
   }
 
-  async ping(): Promise<void> {
+  override async ping(): Promise<void> {
     await this.getTableProperties()
   }
 
-  async getByIds<ROW extends ObjectWithId>(
+  override async getByIds<ROW extends ObjectWithId>(
     table: string,
     ids: string[],
-    opt?: CommonDBOptions,
+    _opt?: CommonDBOptions,
   ): Promise<ROW[]> {
-    const rowById = _by(await this.getAllRows<ROW>(table), 'id')
+    const rowById = _by(await this.getAllRows<ROW>(table), r => r.id)
     return ids.map(id => rowById[id]!).filter(Boolean)
   }
 
@@ -75,25 +81,25 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
       ranges: [table],
       includeGridData: true,
     })
-    if (!res.data.sheets?.[0].data?.[0]?.rowData?.length) return []
+    if (!res.data.sheets?.[0]?.data?.[0]?.rowData?.length) return []
 
-    const sheetRows = res.data.sheets![0].data![0].rowData!
-    const cols = sheetRows[0].values!.map(v => v.effectiveValue?.stringValue!).filter(Boolean)
+    const sheetRows = res.data.sheets[0].data[0].rowData
+    const cols = sheetRows[0]!.values!.map(v => v.effectiveValue?.stringValue).filter(Boolean)
     // console.log(cols)
 
-    const outputRows: ROW[] = []
+    const outputRows: AnyObjectWithId[] = []
 
     sheetRows.slice(1).forEach(sheetRow => {
       if (!sheetRow.values) return
-      const row = {} as ROW
+      const row = {} as AnyObjectWithId
       sheetRow.values.forEach((cell, i) => {
         const v = cell.effectiveValue
-        if (v && cols[i]) row[cols[i]] = v.boolValue ?? v.numberValue ?? v.stringValue
+        if (v && cols[i]) row[cols[i]!] = v.boolValue ?? v.numberValue ?? v.stringValue
       })
       if (row.id) outputRows.push(row)
     })
 
-    return outputRows
+    return outputRows as ROW[]
   }
 
   async getColumnNames(table: string): Promise<string[]> {
@@ -104,10 +110,10 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
     return res.data.values?.[0] || []
   }
 
-  async saveBatch<ROW extends ObjectWithId>(
+  override async saveBatch<ROW extends ObjectWithId>(
     table: string,
     rows: ROW[],
-    opt: CommonDBSaveOptions = {},
+    _opt: CommonDBSaveOptions<ROW> = {},
   ): Promise<void> {
     // ensure table exists
     const { sheetId } = await this.createTableIfNeeded(table)
@@ -146,8 +152,8 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
 
     // console.log(res.data.values)
 
-    const rowsToUpdate = rows.filter(r => !!rowById[r.id])
-    const rowsToAppend = rows.filter(r => !rowById[r.id])
+    const rowsToUpdate: AnyObjectWithId[] = rows.filter(r => !!rowById[r.id])
+    const rowsToAppend: AnyObjectWithId[] = rows.filter(r => !rowById[r.id])
     // console.log({
     //   dbmsToUpdate: dbmsToUpdate.length,
     //   dbmsToAppend: dbmsToAppend.length,
@@ -201,7 +207,11 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
     return rowById
   }
 
-  async deleteByIds(table: string, ids: string[], opt?: CommonDBOptions): Promise<number> {
+  override async deleteByIds(
+    table: string,
+    ids: string[],
+    _opt?: CommonDBOptions,
+  ): Promise<number> {
     const { sheetId } = await this.createTableIfNeeded(table)
 
     const rowById = await this.getRowByIdMap(table)
@@ -230,7 +240,10 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
     return existingIds.length
   }
 
-  async deleteByQuery(q: DBQuery, opt?: CommonDBOptions): Promise<number> {
+  override async deleteByQuery<ROW extends ObjectWithId>(
+    q: DBQuery<ROW>,
+    opt?: CommonDBOptions,
+  ): Promise<number> {
     const { rows } = await this.runQuery(q.select(['id']), opt)
     const ids = rows.map(r => r.id)
 
@@ -262,28 +275,29 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
     }
   }
 
-  async resetCache(table?: string): Promise<void> {}
-
-  async runQuery<ROW extends ObjectWithId, OUT = ROW>(
+  override async runQuery<ROW extends ObjectWithId>(
     q: DBQuery<ROW>,
-    opt?: CommonDBOptions,
-  ): Promise<RunQueryResult<OUT>> {
+    _opt?: CommonDBOptions,
+  ): Promise<RunQueryResult<ROW>> {
     const rows = await this.getAllRows<ROW>(q.table)
 
     return {
-      rows: queryInMemory<ROW, OUT>(q, rows),
+      rows: queryInMemory<ROW>(q, rows),
     }
   }
 
-  async runQueryCount(q: DBQuery, opt?: CommonDBOptions): Promise<number> {
+  override async runQueryCount<ROW extends ObjectWithId>(
+    q: DBQuery<ROW>,
+    opt?: CommonDBOptions,
+  ): Promise<number> {
     const { rows } = await this.runQuery(q, opt)
     return rows.length
   }
 
-  streamQuery<ROW extends ObjectWithId, OUT = ROW>(
+  override streamQuery<ROW extends ObjectWithId>(
     q: DBQuery<ROW>,
     opt?: CommonDBStreamOptions,
-  ): ReadableTyped<OUT> {
+  ): ReadableTyped<ROW> {
     const readable = readableCreate<ROW>()
 
     void this.runQuery(q, opt).then(({ rows }) => {
@@ -294,17 +308,17 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
     return readable
   }
 
-  async getTableSchema<ROW extends ObjectWithId>(table: string): Promise<CommonSchema<ROW>> {
+  override async getTableSchema<ROW extends ObjectWithId>(
+    table: string,
+  ): Promise<JsonSchemaRootObject<ROW>> {
     const rows = await this.getAllRows(table)
-    return CommonSchemaGenerator.generateFromRows(
-      {
-        table,
-      },
-      rows,
-    )
+    return {
+      ...generateJsonSchemaFromData(rows),
+      $id: `${table}.schema.json`,
+    }
   }
 
-  async getTables(): Promise<string[]> {
+  override async getTables(): Promise<string[]> {
     return Object.keys(await this.getTableProperties())
   }
 
@@ -314,7 +328,7 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
     })
 
     const rows = (res.data.sheets || []).map(s => s.properties!)
-    return _by(rows, 'title')
+    return _by(rows, r => r.title)
   }
 
   async createTableIfNeeded(table: string): Promise<sheets_v4.Schema$SheetProperties> {
@@ -343,7 +357,7 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
     // console.log(res.data.replies)
     log(`created table ${table}`)
 
-    return res.data.replies![0].addSheet!.properties!
+    return res.data.replies![0]!.addSheet!.properties!
   }
 
   async deleteTableIfExists(table: string): Promise<void> {
@@ -366,8 +380,11 @@ export class SpreadsheetDB extends BaseCommonDB implements CommonDB {
     log(`deleted table ${table}`)
   }
 
-  async createTable(schema: CommonSchema, opt?: CommonDBCreateOptions): Promise<void> {
-    await this.createTableIfNeeded(schema.table)
+  override async createTable<ROW extends ObjectWithId>(
+    table: string,
+    _schema: JsonSchemaObject<ROW>,
+  ): Promise<void> {
+    await this.createTableIfNeeded(table)
     // column names will be added on-demand
   }
 }

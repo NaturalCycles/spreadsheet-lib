@@ -1,3 +1,1 @@
-import { SpreadsheetDB, SpreadsheetDBCfg } from './spreadsheet.db'
-
-export { SpreadsheetDBCfg, SpreadsheetDB }
+export * from './spreadsheet.db'
